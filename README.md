@@ -40,23 +40,6 @@ The configuration files for fine-tuning MoleculeNet and MoleculeACE are located 
 ```
 python ./scripts/finetune.py <data_folder>/<data_name>  # e.g., moleculenet/bace
 ```
-
-## References
-If you find this work useful, please cite by:
-
-Wan, Y., Wu, J., Hou, T. et al. Multi-channel learning for integrating structural hierarchies into context-dependent molecular representation. Nat Commun 16, 413 (2025). https://doi.org/10.1038/s41467-024-55082-4
-
-or
-
-```
-@Article{Wan2025,
-         title={Multi-channel learning for integrating structural hierarchies into context-dependent molecular representation},
-         author={Wan, Yue and Wu, Jialu and Hou, Tingjun and Hsieh, Chang-Yu and Jia, Xiaowei},
-         journal={Nature Communications},
-         year={2025}, month={Jan}, day={06},
-         volume={16}, number={1}, pages={413},
-         issn={2041-1723},
-         doi={10.1038/s41467-024-55082-4},
          url={https://doi.org/10.1038/s41467-024-55082-4}
 }
 ```
