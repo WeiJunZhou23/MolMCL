@@ -2,6 +2,7 @@ import os
 import sys
 import pickle
 import copy
+import csv
 import random
 import numpy as np
 import pandas as pd
@@ -18,15 +19,25 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.data import InMemoryDataset
 from torch_geometric.utils import to_dense_batch
 from torch.utils.data import Subset
-from sklearn.metrics import roc_auc_score, r2_score
+from sklearn.metrics import roc_auc_score, r2_score, mean_squared_error
 from torch.optim.lr_scheduler import CosineAnnealingLR
-
+from sklearn.model_selection import train_test_split
 from molmcl.finetune.loader import MoleculeDataset
+##################################################
+from molmcl.finetune.loader_customized import MoleculeDataset_cm
+##################################################
 from molmcl.finetune.model import GNNPredictor
 from molmcl.finetune.prompt_optim import optimize_prompt_weight_ri as optimize_prompt_weight_ri_
 from molmcl.splitters import scaffold_split, moleculeace_split
 from molmcl.utils.scheduler import PolynomialDecayLR
 
+class RMSELoss(nn.Module):
+    def __init__(self):
+        super(RMSELoss, self).__init__()
+        self.mse = nn.MSELoss(reduction='mean')  # Ensure reduction='mean'
+
+    def forward(self, pred, target):
+        return torch.sqrt(self.mse(pred, target))  # RMSE already reduces to a scalar
 
 def get_optimizer(model, lr_params):
     assert isinstance(lr_params, dict)
@@ -58,29 +69,95 @@ def get_optimizer(model, lr_params):
     return optimizer
 
 
-def get_dataloader(config, seed=0):
-    # Setup dataset
-    dataset = MoleculeDataset(config['dataset']['data_dir'],
-                              config['dataset']['data_name'],
-                              config['dataset']['feat_type'])
+# def get_dataloader(config, seed=0):
+#     # Setup dataset
+#     dataset = MoleculeDataset(config['dataset']['data_dir'],
+#                               config['dataset']['data_name'],
+#                               config['dataset']['feat_type'])
 
-    num_task = dataset.num_task
-    print('Loading dataset {} of size {} with num_task={}'.format(config['dataset']['data_name'], len(dataset), num_task))
+#     num_task = dataset.num_task
+#     print('Loading dataset {} of size {} with num_task={}'.format(config['dataset']['data_name'], len(dataset), num_task))
 
-    if 'CHEMBL' in config['dataset']['data_name']:  # MoleculeACE stratified random split
-        train_idx, val_idx, test_idx = moleculeace_split(dataset.smiles, dataset.labels, val_size=0.1, test_size=0.1)
-    else:  # MoleculeNet scaffold split
-        train_idx, val_idx, test_idx = scaffold_split(dataset.smiles, frac_valid=0.1, frac_test=0.1, balanced=False)
+#     if 'CHEMBL' in config['dataset']['data_name']:  # MoleculeACE stratified random split
+#         train_idx, val_idx, test_idx = moleculeace_split(dataset.smiles, dataset.labels, val_size=0.1, test_size=0.1)
+#     else:  # MoleculeNet scaffold split
+#         train_idx, val_idx, test_idx = scaffold_split(dataset.smiles, frac_valid=0.1, frac_test=0.1, balanced=False)
     
-    train_dataset, val_dataset, test_dataset = \
-        Subset(dataset, train_idx), Subset(dataset, val_idx), Subset(dataset, test_idx)
+#     train_dataset, val_dataset, test_dataset = \
+#         Subset(dataset, train_idx), Subset(dataset, val_idx), Subset(dataset, test_idx)
 
-    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False)
+#     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True)
+#     val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False)
+#     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False)
 
-    return dataset, train_loader, val_loader, test_loader
+#     return dataset, train_loader, val_loader, test_loader
 
+def get_dataloader(config, seed=0, split_type="scaffold", save_split=True):
+
+    split_type = config['dataset']['split_type']
+    
+    if split_type == 'customized':
+        
+        # Directly load pre-defined DataFrames
+        df_train = pd.read_csv(config['dataset']['custom_train_path'])
+        df_val = pd.read_csv(config['dataset']['custom_val_path'])
+        df_test = pd.read_csv(config['dataset']['custom_test_path'])
+        
+        # Assume the first column is SMILES and the second column is labels
+        smiles_col = df_train.columns[0]  # First column
+        labels_col = df_train.columns[1]  # Second column
+
+        dataset = MoleculeDataset_cm(df_train[smiles_col], df_train[[labels_col]], config['dataset']['feat_type'])
+        train_dataset = MoleculeDataset_cm(df_train[smiles_col], df_train[[labels_col]], config['dataset']['feat_type'])
+        val_dataset = MoleculeDataset_cm(df_val[smiles_col], df_val[[labels_col]], config['dataset']['feat_type'])
+        test_dataset = MoleculeDataset_cm(df_test[smiles_col], df_test[[labels_col]], config['dataset']['feat_type'])
+
+        train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=False)
+        val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False)
+    
+        return dataset, train_loader, val_loader, test_loader
+
+    else:
+        # Setup dataset
+        dataset = MoleculeDataset(config['dataset']['data_dir'],
+                                  config['dataset']['data_name'],
+                                  config['dataset']['feat_type'])
+        num_task = dataset.num_task
+        print(f'Loading dataset {config["dataset"]["data_name"]} of size {len(dataset)} with num_task={num_task}')
+        print(f'Split type: {config["dataset"]["split_type"]}; Seed {seed}')
+    
+        train_file = os.path.join(config['dataset']['data_dir'], f"{config['dataset']['data_name']}_train.csv")
+        val_file = os.path.join(config['dataset']['data_dir'], f"{config['dataset']['data_name']}_val.csv")
+        test_file = os.path.join(config['dataset']['data_dir'], f"{config['dataset']['data_name']}_test.csv")
+    
+        if os.path.exists(train_file) and os.path.exists(val_file) and os.path.exists(test_file):
+            train_idx = pd.read_csv(train_file)['index'].tolist()
+            val_idx = pd.read_csv(val_file)['index'].tolist()
+            test_idx = pd.read_csv(test_file)['index'].tolist()
+        else:
+            if split_type == "moleculeace" and "CHEMBL" in config['dataset']['data_name']:
+                train_idx, val_idx, test_idx = moleculeace_split(dataset.smiles, dataset.labels, val_size=0.1, test_size=0.1)
+            elif split_type == "random":
+                indices = np.arange(len(dataset))
+                train_idx, temp_idx = train_test_split(indices, test_size=0.2, random_state=seed)
+                val_idx, test_idx = train_test_split(temp_idx, test_size=0.5, random_state=seed)
+            else:  # Default to MoleculeNet scaffold split
+                train_idx, val_idx, test_idx = scaffold_split(dataset.smiles, frac_valid=0.1, frac_test=0.1, balanced=False)
+        
+            if save_split:
+                pd.DataFrame({'index': train_idx}).to_csv(train_file, index=False)
+                pd.DataFrame({'index': val_idx}).to_csv(val_file, index=False)
+                pd.DataFrame({'index': test_idx}).to_csv(test_file, index=False)
+    
+        train_dataset, val_dataset, test_dataset = \
+            Subset(dataset, train_idx), Subset(dataset, val_idx), Subset(dataset, test_idx)
+    
+        train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=False)
+        val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=False)
+    
+        return dataset, train_loader, val_loader, test_loader
 
 def set_seed(seed):
     random.seed(seed)
@@ -89,7 +166,7 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def eval(model, val_loader, config, metric='r2'):
+def eval(model, val_loader, config, metric='rmse'):
     assert metric in ['rmse', 'r2']
     model.eval()
     y_true, y_scores = [], []
@@ -104,9 +181,9 @@ def eval(model, val_loader, config, metric='r2'):
     y_true = torch.cat(y_true, dim=0).cpu().numpy()
     y_scores = torch.cat(y_scores, dim=0).cpu().numpy()
 
-    if 'CHEMBL' in config['dataset']['data_name']:
+    if 'CHEMBL' in config['dataset']['data_name'] or config['dataset']['task'] == 'regression':
         if metric == 'rmse':
-            score = -mean_squared_error(y_true, y_scores, squared=False)
+            score = np.sqrt(mean_squared_error(y_true, y_scores))
         else:
             score = r2_score(y_true, y_scores)
     else:
@@ -139,8 +216,14 @@ def train(model, train_loader, criterion, optimizer, scheduler, config, channel_
         elif isinstance(criterion, nn.MSELoss):
             loss = criterion(predict, label)
             loss = loss.mean()
+        elif isinstance(criterion, RMSELoss):  # Include RMSELoss here
+            loss = criterion(predict, label)
+            loss = loss.mean()
+        elif isinstance(criterion, nn.L1Loss):  # Include MAE here
+            loss = criterion(predict, label)
+            loss = loss.mean()
         else:
-            raise Exception
+            raise Exception("Unsupported loss function")
 
         optimizer.zero_grad()
         loss.backward()
@@ -210,9 +293,14 @@ def optimize_prompt_weight_ri(model, train_loader, val_loader, config, metric='e
 def main(config):
     if not config['model']['checkpoint']:
         config['model']['use_prompt'] = False
-
+    save_dir = config['save_dir']
+    try:
+        os.makedirs(save_dir, exist_ok=True)  # Creates all necessary directories
+    except OSError as error:
+        print(f"Error creating directory {save_dir}: {error}")
+        
     runseeds = np.random.randint(100, size=config['num_run'])
-
+    split_seed = config['split_seed']
     # Setup model
     if config['dataset']['feat_type'] == 'basic':
         atom_feat_dim, bond_feat_dim = None, None
@@ -223,17 +311,19 @@ def main(config):
     else:
         raise NotImplementedError('Unrecognized feature type. Please choose from [basic/rich/super_rich].')
 
-    # Setup dataset and dataloader
-    dataset, train_loader, val_loader, test_loader = get_dataloader(config)
-
     # Main:
-    avg_auc_last, avg_auc_best = [], []
+    #avg_auc_last, avg_auc_best = [], []
 
     best_initialization = None
     if config['prompt_optim']['inits']:
         best_initialization = torch.Tensor(config['prompt_optim']['inits'])
 
     for i in range(config['num_run']):
+        # Setup dataset and dataloader
+        if config['dataset']['split_type'] == 'customized':
+            dataset, train_loader, val_loader, test_loader = get_dataloader(config, seed=(split_seed+i))
+        else:
+            dataset, train_loader, val_loader, test_loader = get_dataloader(config, seed=(split_seed+i))
         # Setup model
         model = GNNPredictor(num_layer=config['model']['num_layer'],
                              emb_dim=config['model']['emb_dim'],
@@ -276,16 +366,25 @@ def main(config):
             scheduler = PolynomialDecayLR(optimizer, warmup_updates=config['epochs'] * len(train_loader) // 10,
                                           tot_updates=config['epochs'] * len(train_loader),
                                           lr=config['optim']['finetune_lr'], end_lr=1e-9, power=1)
-
+        
+        best_score, best_checkpoint = None, None  # Initialize here
         # Setup loss function
         if config['dataset']['task'] == 'regression':
-            criterion = nn.MSELoss(reduction='none')
+            print('Initialize best score and best checkpoint for regression tasks.')
+            best_score = float('inf')
+            if config['dataset']['loss_func'] == 'MSE':
+                criterion = nn.MSELoss(reduction='none')
+            elif config['dataset']['loss_func'] == 'RMSE':
+                criterion = RMSELoss()
+            elif config['dataset']['loss_func'] == 'MAE':
+                criterion = nn.L1Loss(reduction='none')
+            
         elif config['dataset']['task'] == 'classification':
+            print('Initialize best score and best checkpoint for classification tasks.')
             criterion = nn.BCEWithLogitsLoss(reduction="none")
+            best_score = -float('inf')
         else:
             raise NotImplementedError
-
-        best_score, best_checkpoint = -float('inf'), None
 
         # Setup learnable parameters:
         model.freeze_aggr_module()
@@ -293,7 +392,13 @@ def main(config):
         # Setup random seed
         print("Seed:", runseeds[i])
         set_seed(runseeds[i])
+        model_path = os.path.join(save_dir, f'model_{i}.pt')
 
+        csv_filename = os.path.join(save_dir, f'scores_run_{i}.csv')
+        with open(csv_filename, 'w', newline='') as csvfile:
+            csv_writer = csv.writer(csvfile)
+            csv_writer.writerow(["epoch", "train_score", "val_score", "test_score"])  # Header row
+            
         for epoch in tqdm(range(1, config['epochs'] + 1)):
             # train one epoch
             train(model, train_loader, criterion, optimizer, scheduler, config)
@@ -301,7 +406,12 @@ def main(config):
             # evaluate validation
             score = eval(model, val_loader, config)
             test_score = eval(model, test_loader, config)
-
+            train_score = eval(model, train_loader, config)
+            
+            with open(csv_filename, 'a', newline='') as csvfile:
+                csv_writer = csv.writer(csvfile)
+                csv_writer.writerow([epoch, train_score, score, test_score])
+                
             if config['optim']['scheduler'] == 'cos_anneal':
                 scheduler.step()
 
@@ -313,39 +423,49 @@ def main(config):
             elif config['verbose']:
                 cur_lr = optimizer.param_groups[-1]['lr']
                 tqdm.write(f"[ep{epoch}] {score:>4.4f} {test_score:>4.4f} {cur_lr}")
-
-            if score > best_score:
-                best_score = score
-                best_checkpoint = copy.deepcopy(model.state_dict())
+            
+            if config['dataset']['task'] == 'regression':
+                if score < best_score:
+                    best_score = score
+                    #best_checkpoint = copy.deepcopy(model.state_dict())
+                    #torch.save(best_checkpoint, model_path)
+                    torch.save({'wrapper': model.state_dict()}, model_path)
+                    print(f"Best model saved at epoch {epoch} with score {score:.4f}")
+            elif config['dataset']['task'] == 'classification':
+                if score > best_score:
+                    best_score = score
+                    #best_checkpoint = copy.deepcopy(model.state_dict())
+                    torch.save({'wrapper': model.module.state_dict()}, model_path)
+                    print(f"Best model saved at epoch {epoch} with score {score:.4f}")
 
         score_last_checkpoint = eval(model, test_loader, config)
-        avg_auc_last.append(score_last_checkpoint)
+        #avg_auc_last.append(score_last_checkpoint)
         if config['model']['use_prompt']:
             print('Prompt weight of last checkpoint:', model.get_prompt_weight('softmax').data.cpu())
 
-        model.load_state_dict(best_checkpoint)
+        #model.load_state_dict(best_checkpoint)
         score_best_checkpoint = eval(model, test_loader, config)
-        avg_auc_best.append(score_best_checkpoint)
+        #avg_auc_best.append(score_best_checkpoint)
         if config['model']['use_prompt']:
             print('Prompt weight of best checkpoint:', model.get_prompt_weight('softmax').data.cpu())
 
         if 'CHEMBL' in config['dataset']['data_name']:
             print('[Best R2]: {:.4f} {:.4f} {:.4f}'.format(best_score, score_last_checkpoint, score_best_checkpoint))
         else:
-            print('[Best AUC]: {:.4f} {:.4f} {:.4f}'.format(best_score, score_last_checkpoint, score_best_checkpoint))
+            print('[Best score]: {:.4f}'.format(score_best_checkpoint))
 
-    print(avg_auc_last)
-    print('[Last] {} {}'.format(np.mean(avg_auc_last), np.std(avg_auc_last)))
-    print(avg_auc_best)
-    print('[Best] {} {}'.format(np.mean(avg_auc_best), np.std(avg_auc_best)))
-
-    if not os.path.exists('./result'):
-        os.mkdir('./result')
-    with open('./result/{}_{}.txt'.format(config['dataset']['data_name'], config['dataset']['feat_type']), 'w') as f:
-        for i in range(len(avg_auc_best)):
-            f.write('Run #{} (seed={}): best={} last={}\n'.format(i + 1, runseeds[i], avg_auc_best[i], avg_auc_last[i]))
-        f.write('Average last score: {}\n'.format(np.mean(avg_auc_last)))
-        f.write('Average best score: {}\n'.format(np.mean(avg_auc_best)))
+    #print(avg_auc_last)
+    #print('[Last] {} {}'.format(np.mean(avg_auc_last), np.std(avg_auc_last)))
+    #print(avg_auc_best)
+    #print('[Best] {} {}'.format(np.mean(avg_auc_best), np.std(avg_auc_best)))
+    
+    #res_path = os.path.join(save_dir, f"{config['dataset']['data_name']}_{config['dataset']['feat_type']}.txt")
+    
+    #with open(res_path, 'w') as f:
+        #for i in range(len(avg_auc_best)):
+            #f.write('Run #{} (seed={}): best={} last={}\n'.format(i + 1, runseeds[i], avg_auc_best[i], avg_auc_last[i]))
+        #f.write('Average last score: {}\n'.format(np.mean(avg_auc_last)))
+        #f.write('Average best score: {}\n'.format(np.mean(avg_auc_best)))
 
 
 if __name__ == '__main__':
