@@ -40,8 +40,3 @@ The configuration files for fine-tuning MoleculeNet and MoleculeACE are located 
 ```
 python ./scripts/finetune.py <data_folder>/<data_name>  # e.g., moleculenet/bace
 ```
-         url={https://doi.org/10.1038/s41467-024-55082-4}
-}
-```
-
-Thanks!
