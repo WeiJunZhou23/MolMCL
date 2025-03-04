@@ -1,3 +1,9 @@
+## Follow the below steps for dependency installation.
+```
+conda create -n molmcl python=3.10
+conda activate molmcl
+bash build.sh  # this will install all dependencies using pip
+```
 ## Fine-tuning
 Examples of creating the configuration files can be found:
 
