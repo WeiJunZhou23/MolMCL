@@ -1,3 +1,6 @@
+## Ogirinal MolMCL GitHub:
+https://github.com/yuewan2/MolMCL.git
+
 ## Follow the below steps for dependency installation.
 ```
 conda create -n molmcl python=3.10
