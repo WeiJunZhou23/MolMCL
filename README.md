@@ -11,7 +11,9 @@ bash build.sh  # this will install all dependencies using pip
 Examples of creating the configuration files can be found:
 
 ### generate_YAML_configuration_file_example.ipynb
-
+```
+python ./scripts/finetune.py <data_folder>/<data_name>  # e.g., moleculenet/bace (save under ./config/)
+```
 ## Predicting
 Examples of creating the configuration files for prediction can be found:
 
