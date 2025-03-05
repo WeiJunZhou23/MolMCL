@@ -18,3 +18,7 @@ python ./scripts/finetune.py <data_folder>/<data_name>  # e.g., moleculenet/bace
 Examples of creating the configuration files for prediction can be found:
 
 ### generate_prediction_YAML_configuration_file_example.ipynb
+
+```
+python ./scripts/predict.py full/yaml/path # e.g., ./dumped/finetune/bace.yaml
+```
