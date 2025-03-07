@@ -435,7 +435,7 @@ def main(config):
                 if score > best_score:
                     best_score = score
                     #best_checkpoint = copy.deepcopy(model.state_dict())
-                    torch.save({'wrapper': model.module.state_dict()}, model_path)
+                    torch.save({'wrapper': model.state_dict()}, model_path)
                     print(f"Best model saved at epoch {epoch} with score {score:.4f}")
 
         score_last_checkpoint = eval(model, test_loader, config)
