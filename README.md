@@ -1,6 +1,9 @@
 ## Ogirinal MolMCL GitHub:
 https://github.com/yuewan2/MolMCL.git
 
+## Pre-trained models:
+Two pre-trained checkpoints (with GIN and GPS backbone): [link](https://drive.google.com/drive/folders/1G_Yejbv8LCkV5guSf1WOJq2v3Nx55e58). Put the `./checkpoint` folder in the main directory.
+
 ## Follow the below steps for dependency installation.
 ```
 conda create -n molmcl python=3.10
